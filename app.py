@@ -5,10 +5,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 import openai
-import io
 
 st.set_page_config(page_title="Bulk Email Sender", layout="centered")
-st.title("📧 Bulk Email Sender (with AI & Attachments)")
+st.title("📧 Bulk Email Sender (AI, Attachments & Analytics)")
 
 # 1. Upload Email List
 st.header("1. Upload Email List")
@@ -30,19 +29,24 @@ if uploaded_file:
     st.header("3. Compose Email")
     use_ai = st.checkbox("Use AI to generate email body (OpenAI)", value=False)
     if use_ai:
-        openai_api_key = st.text_input("Enter your OpenAI API Key", type="password")
-        prompt = st.text_area("Describe your campaign (for AI)", "Announce our new product launch.")
-        if st.button("Generate Email Content") and openai_api_key:
-            openai.api_key = openai_api_key
-            with st.spinner("Generating with AI..."):
-                completion = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                ai_body = completion.choices[0].message.content
-            st.text_area("AI-Generated Body", ai_body, height=200)
-            body = ai_body
+        if "OPENAI_API_KEY" in st.secrets:
+            prompt = st.text_area("Describe your campaign for AI", "Announce our new product launch.")
+            if st.button("Generate Email Content"):
+                openai.api_key = st.secrets["OPENAI_API_KEY"]
+                with st.spinner("Generating with AI..."):
+                    try:
+                        completion = openai.ChatCompletion.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        ai_body = completion.choices[0].message.content
+                        st.session_state['ai_body'] = ai_body
+                        st.text_area("AI-Generated Body", ai_body, height=200)
+                    except Exception as e:
+                        st.error(f"OpenAI Error: {e}")
+            body = st.session_state.get('ai_body', "")
         else:
+            st.error("OpenAI API Key not set in Streamlit Cloud Secrets.")
             body = ""
     else:
         body = st.text_area("Manual Email Body", "Hello,\n\nThis is a test marketing email.")
@@ -73,18 +77,24 @@ if uploaded_file:
             st.error("Please provide both subject and body.")
         else:
             st.write("Sending emails...")
-            server = smtplib.SMTP(smtp_server, port)
-            server.starttls()
             try:
+                server = smtplib.SMTP(smtp_server, port, timeout=60)
+                server.starttls()
                 server.login(sender_email, smtp_password)
             except Exception as e:
                 st.error(f"SMTP login failed: {e}")
-                server.quit()
+                try:
+                    server.quit()
+                except:
+                    pass
                 st.stop()
 
             success, failed = [], []
             for idx, row in df.iterrows():
-                recipient = row['Email']
+                recipient = str(row['Email']).strip()
+                if not recipient or "@" not in recipient:
+                    failed.append((recipient, "Invalid email address"))
+                    continue
                 msg = MIMEMultipart()
                 msg['From'] = sender_email
                 msg['To'] = recipient
@@ -93,22 +103,29 @@ if uploaded_file:
 
                 # Add attachment if present
                 if attachment is not None:
-                    file_bytes = attachment.read()
-                    file_part = MIMEApplication(file_bytes, Name=attachment.name)
-                    file_part['Content-Disposition'] = f'attachment; filename="{attachment.name}"'
-                    msg.attach(file_part)
+                    try:
+                        file_bytes = attachment.read()
+                        file_part = MIMEApplication(file_bytes, Name=attachment.name)
+                        file_part['Content-Disposition'] = f'attachment; filename="{attachment.name}"'
+                        msg.attach(file_part)
+                    except Exception as e:
+                        failed.append((recipient, f"Attachment error: {e}"))
+                        continue
 
                 try:
                     server.sendmail(sender_email, recipient, msg.as_string())
                     success.append(recipient)
                 except Exception as e:
                     failed.append((recipient, str(e)))
-            server.quit()
+            try:
+                server.quit()
+            except:
+                pass
 
             st.success(f"Sent to {len(success)} emails! Failed for {len(failed)}.")
-            st.write("✅ Success:", success[:10], "..." if len(success) > 10 else "")
+            st.write("✅ Success (first 10):", success[:10], "..." if len(success) > 10 else "")
             if failed:
-                st.warning("❌ Failed:")
+                st.warning("❌ Failed (first 10):")
                 st.write(failed[:10])
 
             # Download summary as CSV
@@ -116,3 +133,8 @@ if uploaded_file:
             result_failed = pd.DataFrame(failed, columns=['Failed', 'Reason'])
             st.download_button("Download Success List", result_df.to_csv(index=False), file_name="success.csv")
             st.download_button("Download Failed List", result_failed.to_csv(index=False), file_name="failed.csv")
+else:
+    st.info("Upload an Excel or CSV file to get started.")
+
+# Footer
+st.markdown("---\nMade with ❤️ using Streamlit • For best results, use Brevo for bulk sending.")
