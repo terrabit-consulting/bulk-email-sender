@@ -31,19 +31,20 @@ if uploaded_file:
     if use_ai:
         if "OPENAI_API_KEY" in st.secrets:
             prompt = st.text_area("Describe your campaign for AI", "Announce our new product launch.")
-            if st.button("Generate Email Content"):
-                openai.api_key = st.secrets["OPENAI_API_KEY"]
-                with st.spinner("Generating with AI..."):
-                    try:
-                        completion = openai.ChatCompletion.create(
+            generate = st.button("Generate Email Content")
+            if generate:
+                try:
+                    client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                    with st.spinner("Generating with AI..."):
+                        response = client.chat.completions.create(
                             model="gpt-3.5-turbo",
                             messages=[{"role": "user", "content": prompt}]
                         )
-                        ai_body = completion.choices[0].message.content
-                        st.session_state['ai_body'] = ai_body
-                        st.text_area("AI-Generated Body", ai_body, height=200)
-                    except Exception as e:
-                        st.error(f"OpenAI Error: {e}")
+                    ai_body = response.choices[0].message.content
+                    st.session_state['ai_body'] = ai_body
+                    st.text_area("AI-Generated Body", ai_body, height=200)
+                except Exception as e:
+                    st.error(f"OpenAI Error: {e}")
             body = st.session_state.get('ai_body', "")
         else:
             st.error("OpenAI API Key not set in Streamlit Cloud Secrets.")
